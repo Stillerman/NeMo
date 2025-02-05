@@ -119,6 +119,16 @@ def get_calib_data_iter(data="wikitext", batch_size=1, calib_size=1024, max_sequ
 @hydra_runner(config_path="conf", config_name="megatron_gpt_prune")
 def main(cfg) -> None:
     """Prune a model using modelopt."""
+    import torch
+    import io
+    import modelopt.torch.utils.distributed as dist_utils
+    original_deserialize = dist_utils._deserialize
+    def patched_deserialize(tensor):
+        buffer = tensor.numpy().tobytes()
+        return torch.load(io.BytesIO(buffer), weights_only=False)
+    dist_utils._deserialize = patched_deserialize
+
+
     # Overwrite model config with the one from the model checkpoint and apply pruning modifications
     model_cfg = load_config(cfg.model.restore_from_path)
     model_cfg.update(cfg.model)

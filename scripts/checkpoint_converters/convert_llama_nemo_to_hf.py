@@ -19,7 +19,7 @@ from collections import OrderedDict
 import torch
 from lightning.pytorch import Trainer
 from omegaconf import open_dict
-from transformers import AutoModelForCausalLM, LlamaTokenizer, LlamaTokenizerFast, convert_slow_tokenizer
+from transformers import AutoModelForCausalLM, LlamaTokenizer, LlamaTokenizerFast, convert_slow_tokenizer, AutoConfig
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
@@ -114,9 +114,12 @@ def convert(input_nemo_file, output_hf_file, precision=None, cpu_only=False) -> 
     Convert NeMo weights to HF weights
     """
     dummy_trainer = Trainer(devices=1, accelerator='cpu', strategy=NLPDDPStrategy())
-    model_config = MegatronGPTModel.restore_from(input_nemo_file, trainer=dummy_trainer, return_config=True)
+    logging.info("***** loading model config ****")
+    model_config = MegatronGPTModel.restore_from(input_nemo_file, trainer=dummy_trainer, return_config=True, strict=False)
+    logging.info("***** Loaded model config. Setting tp and pp *****")
     model_config.tensor_model_parallel_size = 1
     model_config.pipeline_model_parallel_size = 1
+    model_config.sequence_parallel = False  # Add this line
     model_config.name = "te_gpt"
     if cpu_only:
         map_location = torch.device('cpu')
@@ -127,7 +130,7 @@ def convert(input_nemo_file, output_hf_file, precision=None, cpu_only=False) -> 
     if cpu_only:
         logging.info("******** Loading model on CPU. This will take a significant amount of time.")
     model = MegatronGPTModel.restore_from(
-        input_nemo_file, trainer=dummy_trainer, override_config_path=model_config, map_location=map_location
+        input_nemo_file, trainer=dummy_trainer, override_config_path=model_config, map_location=map_location, strict=False
     )
     if precision is None:
         precision = model.cfg.precision
@@ -141,6 +144,9 @@ def convert(input_nemo_file, output_hf_file, precision=None, cpu_only=False) -> 
         logging.warning(f"Precision string {precision} is not recognized, falling back to fp32")
         dtype = torch.float32  # fallback
     logging.info(f"Using precision {dtype}")
+
+    breakpoint()
+    # return dtype
 
     param_to_weights = lambda param: param.to(dtype)
     checkpoint = OrderedDict()
@@ -246,12 +252,15 @@ def replace_hf_weights_and_tokenizer(
     tokenizer_path,
     output_hf_tokenizer,
 ):
-    model = AutoModelForCausalLM.from_pretrained(
-        input_hf_path,
-        local_files_only=True,
-        torch_dtype=dtype,
-    )
+    print("creating hf config...")
+    conf = AutoConfig.from_pretrained(input_hf_path, local_files_only=True)
+    print("creating hf model...")
+    model = AutoModelForCausalLM.from_config(conf)
+    print("hf model created")
+
+    print("loading nemo weights...")
     nemo_exported = torch.load(weights_file)
+    print("nemo weights loaded")
 
     if tokenizer_path:
         try:
@@ -268,8 +277,12 @@ def replace_hf_weights_and_tokenizer(
             tokenizer = None
             logging.warning("Could not load custom tokenizer, proceeding with default tokenizer")
 
+    print("loading nemo weights into hf model...")
     model.load_state_dict(nemo_exported)
+    print("nemo weights loaded into hf model")
+    print("saving hf model...")
     model.save_pretrained(output_hf_path)
+    print("hf model saved")
     logging.info(f"Full HF model saved to {output_hf_path}")
 
     if tokenizer_path and (tokenizer is not None):

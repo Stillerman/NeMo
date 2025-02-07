@@ -184,6 +184,7 @@ def load_model_from_config(trainer, cfg):
                 trainer=trainer,
                 return_config=True,
                 save_restore_connector=save_restore_connector,
+                strict=False
             )
 
             # with dist checkpointing we don't need to set this
@@ -221,6 +222,7 @@ def load_model_from_config(trainer, cfg):
             trainer=trainer,
             return_config=True,
             save_restore_connector=save_restore_connector,
+            strict=False
         )
         OmegaConf.set_struct(pretrained_cfg, True)
         with open_dict(pretrained_cfg):
@@ -247,6 +249,7 @@ def load_model_from_config(trainer, cfg):
             override_config_path=pretrained_cfg,
             save_restore_connector=save_restore_connector,
             map_location=f'cuda:{trainer.local_rank}',  # map_location is needed for converted models
+            strict=False
         )
     elif cfg.checkpoint_dir:
         app_state = AppState()
